@@ -1,0 +1,165 @@
+
+alias: "⚽ AWTRIX - Marcadores"
+description: "Zeigt Spielstand, Spielzeit und letzte Spielereignisse auf AWTRIX 3 an."
+
+triggers:
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    to: "IN"
+    id: gameStart
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    to:
+      - "PRE"
+      - "POST"
+      - "NOT_FOUND"
+    id: noGame
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    attribute: team_score
+    id: scoreChangeHome
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    attribute: opponent_score
+    id: scoreChangeOpponent
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    attribute: quarter
+    to: "2"
+    id: halftime
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    attribute: last_play
+    id: lastPlayChange
+
+  - trigger: state
+    entity_id: sensor.teamtracker_dein_verein
+    attribute: clock
+    to: "MT"
+    id: clock
+
+conditions: []
+
+actions:
+  - variables:
+      awtrix_devices:
+        - awtrix_wohnzimmer
+      appname: app_futbol
+      message_duration: 15
+      my_sensor: sensor.teamtracker_dein_verein
+
+  - variables:
+      homegame: >-
+        {{ state_attr(my_sensor, 'team_homeaway') == 'home' }}
+
+      color_home_team_1: >-
+        {{ state_attr(my_sensor, 'team_colors')[0]
+           if homegame else
+           state_attr(my_sensor, 'opponent_colors')[0] }}
+
+      color_home_team_2: >-
+        {{ state_attr(my_sensor, 'team_colors')[1]
+           if homegame else
+           state_attr(my_sensor, 'opponent_colors')[1] }}
+
+      color_away_team_1: >-
+        {{ state_attr(my_sensor, 'opponent_colors')[0]
+           if homegame else
+           state_attr(my_sensor, 'team_colors')[0] }}
+
+      color_away_team_2: >-
+        {{ state_attr(my_sensor, 'opponent_colors')[1]
+           if homegame else
+           state_attr(my_sensor, 'team_colors')[1] }}
+
+      home_team_score: >-
+        {{ state_attr(my_sensor, 'team_score')
+           if homegame else
+           state_attr(my_sensor, 'opponent_score') }}
+
+      away_team_score: >-
+        {{ state_attr(my_sensor, 'opponent_score')
+           if homegame else
+           state_attr(my_sensor, 'team_score') }}
+
+      play_text: >-
+        {% set last_play = state_attr(my_sensor, 'last_play') %}
+        {% if last_play is string and "'" in last_play %}
+          {% set last_index = last_play.rfind("'") %}
+          {{ last_play[last_index - 2:] | trim }}
+        {% else %}
+          {{ last_play or '' }}
+        {% endif %}
+
+  - repeat:
+      for_each: "{{ awtrix_devices }}"
+      sequence:
+        - choose:
+            - conditions:
+                - condition: trigger
+                  id:
+                    - gameStart
+                    - scoreChangeHome
+                    - scoreChangeOpponent
+                    - halftime
+                    - lastPlayChange
+                    - clock
+
+                - condition: state
+                  entity_id: sensor.teamtracker_dein_verein
+                  state: "IN"
+
+              sequence:
+                - action: mqtt.publish
+                  data:
+                    qos: 0
+                    retain: false
+                    topic: "{{ repeat.item }}/custom/{{ appname }}"
+                    payload: >-
+                      {
+                        "text": "     {{ state_attr(my_sensor, 'team_abbr') }} {{ home_team_score }}-{{ away_team_score }} {{ state_attr(my_sensor, 'opponent_abbr') }} - {{ state_attr(my_sensor, 'clock') }} | {{ play_text }}",
+                        "draw": [
+                          {"df":[0,1,8,2,"{{ color_home_team_1 }}"]},
+                          {"df":[1,3,6,5,"{{ color_home_team_1 }}"]},
+                          {"dl":[3,0,4,0,"{{ color_home_team_1 }}"]},
+                          {"dl":[2,2,2,7,"{{ color_home_team_2 }}"]},
+                          {"dl":[5,2,5,7,"{{ color_home_team_2 }}"]},
+                          {"df":[24,1,8,2,"{{ color_away_team_1 }}"]},
+                          {"df":[25,3,6,5,"{{ color_away_team_1 }}"]},
+                          {"dl":[27,0,28,0,"{{ color_away_team_1 }}"]},
+                          {"dl":[26,2,26,7,"{{ color_away_team_2 }}"]},
+                          {"dl":[29,2,29,7,"{{ color_away_team_2 }}"]}
+                        ],
+                        "duration": {{ message_duration }},
+                        "background": "#006c28"
+                      }
+
+                - action: mqtt.publish
+                  data:
+                    qos: 0
+                    retain: false
+                    topic: "{{ repeat.item }}/switch"
+                    payload: >-
+                      {
+                        "name": "{{ appname }}"
+                      }
+
+            - conditions:
+                - condition: trigger
+                  id:
+                    - noGame
+
+              sequence:
+                - action: mqtt.publish
+                  data:
+                    qos: 0
+                    retain: false
+                    topic: "{{ repeat.item }}/custom/{{ appname }}"
+                    payload: "{}"
+
+mode: restart
